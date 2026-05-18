@@ -16,12 +16,12 @@ void setup() {
   pinMode(VIN_SEL, OUTPUT);
   digitalWrite(VIN_SEL, HIGH);
 
-  // do SPI initializations before peripherals
-  // HAL::initVSPI_HAL();
-  // HAL::initCSPins();
+  // do communication initializations before peripherals
+  HAL::init();
 
   // // set up peripherals
   // MAX31855::setupMAX();
+  //MCP4725::init();
 
   // initialize all other peripherals here:
 

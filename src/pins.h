@@ -13,6 +13,7 @@
 // I2C
 #define PIN_I2C_SCL 21
 #define PIN_I2C_SDA 48
+#define MCP4725_ADDR 0x60
 
 // Analog inputs (NEED TO ADD POT_VREF ONCE FINAL SOLN)
 #define PIN_VMEASURE 9
@@ -31,4 +32,4 @@
 #define PIN_VSCLK 16
 #define PIN_VMISO 17
 
-#endif PINS_H
+#endif //PINS_H
