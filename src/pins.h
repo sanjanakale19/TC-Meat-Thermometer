@@ -15,8 +15,9 @@
 #define PIN_I2C_SDA 48
 #define MCP4725_ADDR 0x60
 
-// Analog inputs (NEED TO ADD POT_VREF ONCE FINAL SOLN)
+// Analog inputs
 #define PIN_VMEASURE 9
+#define PIN_POT_VREF 5
 
 // Digital outputs / inputs
 #define PIN_COMPARATOR_OUT 13
