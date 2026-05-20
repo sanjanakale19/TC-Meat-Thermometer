@@ -6,6 +6,7 @@
 #include "MAX31855.h"
 #include "MCP4725.h"
 #include "potentiometer.h"
+#include "INA.h"
 
 const int VMEASURE_ADCIN = 9; // Define the GPIO pin
 const int VIN_SEL = 42;
@@ -24,6 +25,8 @@ void setup() {
   // // set up peripherals
   // MAX31855::setupMAX();
   MCP4725::init();
+
+  INA::setupINA();
 
   // initialize all other peripherals here:
 
@@ -51,15 +54,19 @@ void loop() {
   // Serial.println("MAX31855 reading: " + String(maxF) + " deg Fahrenheit");
   // Serial.println("do other stuff now...");
 
+  //Testing for INA233 readings
+  INA::readINA();
+
   //Testing for MCP4725 DAC
   MCP4725::setVoltage(1.65f);
 
   //Testing for potentiometer readings
   float potV = Potentiometer::readVoltage();
 
-  Serial.print("POT_VREF = ");
-  Serial.print(potV, 3);
-  Serial.println(" V");
+  //Temp muting for INA233a testing
+  // Serial.print("POT_VREF = ");
+  // Serial.print(potV, 3);
+  // Serial.println(" V");
 
   delay(100);
 

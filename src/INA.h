@@ -21,7 +21,7 @@ namespace INA {
     INA233 ina(HAL::INA_ADDR);
 
     int lastRead = 0;
-    float R_shunt_IC1=0.01;   //call RS2 on the board 
+    float R_shunt_IC1=0.002;   //call RS2 on the board 
     float I_max_IC1=2;
 
     //variables to catch the outputs from set_Calibration()
@@ -52,7 +52,16 @@ namespace INA {
         if (millis() - lastRead > 500) {
             // bus_voltage = 0;
         bus_voltage=ina.getBusVoltage_V();
-        DEBUG("Bus Voltage:   "); DEBUG(bus_voltage);DEBUGLN(" V, ");
+        // DEBUG("Bus Voltage:   "); DEBUG(bus_voltage); DEBUGLN(" V, ");
+        Serial.print("Bus Voltage: "); Serial.print(bus_voltage); Serial.println(" V");
+        
+        current_value = ina.getCurrent_mA();
+        Serial.print("Current draw: "); Serial.print(current_value); Serial.println(" mA");  
+        
+        power_value = ina.getAv_Power_mW();
+        Serial.print("Power draw: "); Serial.print(power_value); Serial.println(" mW");
+
+        lastRead = millis();
         }
     }
 
