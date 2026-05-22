@@ -7,6 +7,7 @@
 #include "MCP4725.h"
 #include "potentiometer.h"
 #include "INA.h"
+#include "lcd_ui.h"
 
 const int VMEASURE_ADCIN = 9; // Define the GPIO pin
 const int VIN_SEL = 42;
@@ -27,6 +28,9 @@ void setup() {
   MCP4725::init();
 
   INA::setupINA();
+
+  LCD_UI::init();
+  LCD_UI::writeMessage("Hello", "LCD works");
 
   // initialize all other peripherals here:
 
