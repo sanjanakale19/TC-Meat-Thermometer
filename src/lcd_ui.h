@@ -19,6 +19,7 @@ namespace LCD_UI {
 
     void displaySetTemp(float tempC);
 
+    void displayReadTemp(float tempC);
 }
 
 #endif // LCD_UI_H

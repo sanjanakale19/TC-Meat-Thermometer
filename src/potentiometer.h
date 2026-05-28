@@ -7,6 +7,7 @@ namespace Potentiometer {
     void init();
     int readRaw();
     float readVoltage();
+    float voltageToTemperatureC(float voltage);
 }
 
 #endif

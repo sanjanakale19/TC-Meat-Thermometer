@@ -65,7 +65,16 @@ namespace LCD_UI {
     void displaySetTemp(float tempC) {
         if (!initialized) return;
 
-        String line1 = "Set Temp:";
+        String line1 = "Set temp to";
+        String line2 = String(tempC, 1) + " C";
+
+        writeMessage(line1, line2);
+    }
+
+    void displayReadTemp(float tempC) {
+        if (!initialized) return;
+
+        String line1 = "Reading temp:";
         String line2 = String(tempC, 1) + " C";
 
         writeMessage(line1, line2);
