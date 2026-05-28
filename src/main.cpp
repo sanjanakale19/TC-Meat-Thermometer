@@ -66,11 +66,9 @@ void loop() {
 
   //Testing for potentiometer readings
   float potV = Potentiometer::readVoltage();
-
-  //Temp muting for INA233a testing
-  // Serial.print("POT_VREF = ");
-  // Serial.print(potV, 3);
-  // Serial.println(" V");
+  Serial.print("POT_VREF = ");
+  Serial.print(potV, 3);
+  Serial.println(" V");
 
   delay(100);
 

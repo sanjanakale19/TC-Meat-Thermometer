@@ -36,12 +36,9 @@ namespace HAL {
     // SPIClass* HSPI_bus;
 
     // I2C
-    const uint8_t INA_ADDR = 0x40;
     const uint8_t SDA_PIN = PIN_I2C_SDA;
     const uint8_t SCL_PIN = PIN_I2C_SCL;
-    const uint8_t INA_SDA_PIN = PIN_I2C_SDA;
-    const uint8_t INA_SCL_PIN = PIN_I2C_SCL;
-
+ 
     // Peripherals : TODO - add all peripherals here
     const uint8_t MAX31855_CS = PIN_CS_MAX31855;
     // const uint8_t CS2 = 40;

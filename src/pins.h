@@ -13,6 +13,7 @@
 // I2C
 #define PIN_I2C_SCL 21
 #define PIN_I2C_SDA 48
+#define INA233_ADDR 0x40
 #define MCP4725_ADDR 0x60
 #define LCD_ADDR 0x72
 
