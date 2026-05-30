@@ -20,10 +20,9 @@ namespace MAX31855 {
     void setupMAX() {
         for (int i=0; i<300; i++) {
             if(max31855_tcdigital.begin())
-                Serial.println("Set up MAX successfully");
+                DEBUGLN("Set up MAX successfully");
                 break;    
             DEBUGLN("Failed to set up MAX31855");
-            Serial.println("Failed to set up MAX31855");
         }
         DEBUGLN("Timed out when setting up MAX31855");
     }

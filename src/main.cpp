@@ -31,16 +31,23 @@ void adcTask(void *pvParameters) {
         DualSlope::resetDualSlope();
         armed = true;
       } else if (DualSlope::state == DualSlope::DONE) {
+        // copy shared variables under the DualSlope timerMux to avoid races
+        taskENTER_CRITICAL(&DualSlope::timerMux);
         adcval = DualSlope::Vin;
         conversiontime = DualSlope::processtime;
+        taskEXIT_CRITICAL(&DualSlope::timerMux);
+
         ready = true;
+
+        // pace sampling: wait 500 ms before allowing next conversion
+        vTaskDelay(pdMS_TO_TICKS(500));
         armed = false;
       }
       DualSlope::computeADC();
 
       // delay(100);
 
-      vTaskDelay(1);   // yield
+      vTaskDelay(0);   // yield without adding 1 ms delay
     }
 }
 // AUDIO
@@ -72,8 +79,6 @@ void setup() {
   delay(1000);
   Serial.begin(115200);
   delay(1000);
-
-  Serial.println("before HAL");
 
   pinMode(VIN_SEL, OUTPUT);
   digitalWrite(VIN_SEL, tempSelect);  // LOW for TC, HIGH for LM35
@@ -164,13 +169,29 @@ void loop() {
   Serial.println("VMEASURE reading: " + String(voltage, 4) + "V, TEMP: " + String(temp_RAW) + " deg C"); // Print value to the Serial Monitor
   */
 
-  // if (ready) {
-  //   ready = false;
-  //   Serial.println("\n------------------------------------");
-  //   Serial.println("ADC CONVERSION: " + String(adcval));
-  //   Serial.println("conversion time: " + String(conversiontime));
-  //   Serial.println("------------------------------------\n");
-  // }
+  if (ready) {
+    // Atomically copy results from ADC task / DualSlope
+    float localVin = 0.0f;
+    float localProcesstime = 0.0f;
+    uint64_t local_adc_counts = 0;
+
+    taskENTER_CRITICAL(&DualSlope::timerMux);
+    localVin = adcval;
+    localProcesstime = conversiontime;
+    local_adc_counts = DualSlope::adc_counts;
+    taskEXIT_CRITICAL(&DualSlope::timerMux);
+
+    // Back-calculate Vraw and temperature using calibration constants
+    const float vref = 2.048f;
+    float vinput = localVin;
+    float Vraw = (vinput - (vref * 1.0574f)) / 3.1826f;
+    float tempC = Vraw / 0.01f; // 10 mV/degC
+
+    ready = false;
+    Serial.println("\n------------------------------------");
+    Serial.println("Vinput: " + String(vinput, 6) + " V");
+    Serial.println("------------------------------------\n");
+  }
 
   // float maxF = MAX31855::tempF;
   // Serial.println("MAX31855 reading: " + String(maxF) + " deg Fahrenheit");

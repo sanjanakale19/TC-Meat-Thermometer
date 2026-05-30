@@ -13,24 +13,24 @@ namespace HAL {
     }
 
     void initCSPins() {
-        Serial.println("before initalizing");
+        DEBUGLN("before initalizing");
         pinMode(MAX31855_CS, OUTPUT);
         digitalWrite(MAX31855_CS, HIGH);
 
-        Serial.println("initialized CS pins");
+        DEBUGLN("initialized CS pins");
     }
 
     void initVSPI_HAL() {
         VSPI_bus = new SPIClass(HSPI);
         VSPI_bus->begin(VSCK_PIN, VMISO_PIN, VMOSI_PIN);
-        Serial.println("initialized VSPI pins");
+        DEBUGLN("initialized VSPI pins");
 
     } 
 
     void initI2C() {
         Wire.begin(SDA_PIN, SCL_PIN);
         Wire.setClock(100000);
-        Serial.println("initialized I2C pins");
+        DEBUGLN("initialized I2C pins");
     }
 
 }
