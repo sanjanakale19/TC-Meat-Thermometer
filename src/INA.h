@@ -15,13 +15,14 @@
 #include "HAL.h"
 #include <Wire.h>
 #include "Libraries/INA233/infinityPV_INA233.h"
+#include "pins.h"
 
 namespace INA {
 
-    INA233 ina(HAL::INA_ADDR);
+    INA233 ina(INA233_ADDR);
 
     int lastRead = 0;
-    float R_shunt_IC1=0.01;   //call RS2 on the board 
+    float R_shunt_IC1=0.002;   //call RS2 on the board 
     float I_max_IC1=2;
 
     //variables to catch the outputs from set_Calibration()
@@ -42,7 +43,7 @@ namespace INA {
     float power_value = 0;
 
     void setupINA() {
-        ina.begin(HAL::INA_SDA_PIN, HAL::INA_SCL_PIN);
+        ina.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
         CAL=ina.setCalibration(R_shunt_IC1,I_max_IC1,&Current_LSB,&Power_LSB,&m_c,&R_c,&m_p,&R_p,&Set_ERROR);
         ina.wireWriteByte (MFR_DEVICE_CONFIG, 0x06);
@@ -51,8 +52,17 @@ namespace INA {
     void readINA() {
         if (millis() - lastRead > 500) {
             // bus_voltage = 0;
-        bus_voltage=ina.getBusVoltage_V();
-        DEBUG("Bus Voltage:   "); DEBUG(bus_voltage);DEBUGLN(" V, ");
+            bus_voltage=ina.getBusVoltage_V();
+            // DEBUG("Bus Voltage:   "); DEBUG(bus_voltage); DEBUGLN(" V, ");
+            Serial.print("Bus Voltage: "); Serial.print(bus_voltage); Serial.println(" V");
+            
+            current_value = ina.getCurrent_mA();
+            Serial.print("Current draw: "); Serial.print(current_value); Serial.println(" mA");  
+            
+            power_value = ina.getAv_Power_mW();
+            Serial.print("Power draw: "); Serial.print(power_value); Serial.println(" mW");
+
+            lastRead = millis();
         }
     }
 
