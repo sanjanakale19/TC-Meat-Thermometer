@@ -21,7 +21,7 @@ namespace HAL {
     }
 
     void initVSPI_HAL() {
-        VSPI_bus = new SPIClass(HSPI);
+        VSPI_bus = &SPI;
         VSPI_bus->begin(VSCK_PIN, VMISO_PIN, VMOSI_PIN);
         DEBUGLN("initialized VSPI pins");
 

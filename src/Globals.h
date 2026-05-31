@@ -22,6 +22,8 @@
 #define DEBUGLN(val)
 #endif
 
+extern volatile float ambientTempC;
+
 // Main loop has tasks which point to functions to call, including milliseconds until when to read
 // struct Task {
 //     uint32_t (*taskCall)(void);

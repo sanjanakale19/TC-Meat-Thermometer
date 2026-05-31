@@ -19,6 +19,49 @@
 
 namespace DualSlope {
 
+    namespace PrecisionMath {
+        static constexpr float AMBIENT_MIN_C = 0.0f;
+        static constexpr float AMBIENT_MAX_C = 60.0f;
+        static constexpr float TC_GAIN = 140.86f;
+        static constexpr float TC_OFFSET_V = 2.5f;
+        static constexpr float LM35_GAIN = 3.1826f;
+        static constexpr float LM35_OFFSET_V = 2.048f * 1.0574f;
+
+        static constexpr float NIST_K_POSITIVE_INV_COEFFS[9] = {
+            0.000000e+00f,
+            2.508355e+01f,
+            7.860106e-02f,
+           -2.503131e-01f,
+            8.315270e-02f,
+           -1.228034e-02f,
+            9.804036e-04f,
+           -4.413030e-05f,
+            1.057734e-06f
+        };
+
+        inline float ambientTempToMillivolts(float T_ambient) {
+            const float boundedTemp = constrain(T_ambient, AMBIENT_MIN_C, AMBIENT_MAX_C);
+            return boundedTemp * (0.039474f + (0.000035f * boundedTemp));
+        }
+
+        inline float tcAdcVoltageToMillivolts(float V_adc) {
+            return ((V_adc - TC_OFFSET_V) / TC_GAIN) * 1000.0f;
+        }
+
+        inline float lm35AdcVoltageToCelsius(float V_adc) {
+            const float rawVoltage = (V_adc - LM35_OFFSET_V) / LM35_GAIN;
+            return rawVoltage / 0.010f;
+        }
+
+        inline float millivoltsToPreciseTemp(float V_total_mv) {
+            float temperatureC = NIST_K_POSITIVE_INV_COEFFS[8];
+            for (int i = 7; i >= 0; --i) {
+                temperatureC = (temperatureC * V_total_mv) + NIST_K_POSITIVE_INV_COEFFS[i];
+            }
+            return temperatureC;
+        }
+    }
+
     const int S0 = 42;      // SIGNAL SELECT (LOW = TC, HIGH = LM35)
     const int S1 = 40;      // MUX_A0
     const int S2 = 41;      // MUX_A1
@@ -78,6 +121,10 @@ namespace DualSlope {
         if (state != DEINTEGRATE || comparator_tripped) {
             return;
         }
+        uint64_t now = timerRead(adcTimer);
+        if ((now - deintegrate_start) < 10000UL) {
+            return;
+        }
         portENTER_CRITICAL_ISR(&timerMux);
         comparator_tick = timerRead(adcTimer);
         comparator_tripped = true;
@@ -134,13 +181,14 @@ namespace DualSlope {
                 // start RESET: short integrator
                 // flip S0 at the very beginning of RESET according to cycle pattern
                 // 10 cycles TC (S0 LOW), then 1 cycle LM35 (S0 HIGH)
-                if ((cycle_count % 11) == 10) {
+                lastWasLM35 = ((cycle_count % 11) == 10);
+                if (lastWasLM35) {
                     digitalWrite(S0, HIGH); // LM35
                 } else {
                     digitalWrite(S0, LOW);  // TC
                 }
 
-                portENTER_CRITICAL(&timerMux);
+                taskENTER_CRITICAL(&timerMux);
                 phase_start = timerRead(adcTimer);
                 taskEXIT_CRITICAL(&timerMux);
 
@@ -154,7 +202,7 @@ namespace DualSlope {
                 uint64_t now = timerRead(adcTimer);
                 if ((now - phase_start) >= (uint64_t)TRESET_US) {
                     GPIO.out_w1ts = S3_MASK; // open RESET
-                    portENTER_CRITICAL(&timerMux);
+                    taskENTER_CRITICAL(&timerMux);
                     phase_start = timerRead(adcTimer);
                     taskEXIT_CRITICAL(&timerMux);
                     state = WAIT_DELAY;
@@ -225,11 +273,6 @@ namespace DualSlope {
                     // increment cycle counter and set DONE while still in critical section
                     cycle_count++;
                     state = DONE;
-                    // set DONE while still in critical section and record whether this conversion used LM35
-                    bool thisWasLM35 = ((cycle_count % 11) == 10);
-                    lastWasLM35 = thisWasLM35;
-                    cycle_count++;
-                    state = DONE;
                     taskEXIT_CRITICAL(&timerMux);
 
                     // NOTE: No Serial printing here; printing must occur outside critical sections
@@ -268,6 +311,9 @@ namespace DualSlope {
     int resetDualSlope() {
         comparator_tripped = false;
         comparator_tick = 0;
+        if (cycle_count == 0) {
+            cycle_count = 10;
+        }
         state = RESET;
         return 1;
     }

@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <math.h>
+#include "driver/gpio.h"
+#include "soc/rtc_io_reg.h"
 #include "Globals.h"
 #include "HAL.h"
 #include "MAX31855.h"
@@ -16,6 +18,11 @@ const int VIN_SEL = 42;
 
 float adcval = 0;
 float conversiontime = 0;
+volatile float ambientTempC = 0.0f;
+
+static const int N_AVERAGE = 8;
+static uint64_t count_accumulator = 0;
+static int sample_count = 0;
 
 // having both of these is redundant lowkey
 volatile uint32_t ready = false;
@@ -30,7 +37,14 @@ void adcTask(void *pvParameters) {
       if (!armed) {
         DualSlope::resetDualSlope();
         armed = true;
-      } else if (DualSlope::state == DualSlope::DONE) {
+      } else {
+        bool localDone = false;
+
+        taskENTER_CRITICAL(&DualSlope::timerMux);
+        localDone = (DualSlope::state == DualSlope::DONE);
+        taskEXIT_CRITICAL(&DualSlope::timerMux);
+
+        if (localDone) {
         // copy shared variables under the DualSlope timerMux to avoid races
         taskENTER_CRITICAL(&DualSlope::timerMux);
         adcval = DualSlope::Vin;
@@ -42,6 +56,7 @@ void adcTask(void *pvParameters) {
         // pace sampling: wait 500 ms before allowing next conversion
         vTaskDelay(pdMS_TO_TICKS(500));
         armed = false;
+        }
       }
       DualSlope::computeADC();
 
@@ -80,6 +95,14 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
+  gpio_config_t io_conf = {};
+  io_conf.intr_type = GPIO_INTR_DISABLE;
+  io_conf.mode = GPIO_MODE_DISABLE;
+  io_conf.pin_bit_mask = (1ULL << VMEASURE_ADCIN);
+  io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+  gpio_config(&io_conf);
+
   pinMode(VIN_SEL, OUTPUT);
   digitalWrite(VIN_SEL, tempSelect);  // LOW for TC, HIGH for LM35
 
@@ -98,7 +121,7 @@ void setup() {
   // MAX31855::setupMAX();
   // MCP4725::init();
   // Potentiometer::init();
-  // INA::setupINA();
+  INA::setupINA();
 
   // LCD_UI::init();
   // LCD_UI::writeMessage("Waiting for", "first read");
@@ -110,7 +133,7 @@ void setup() {
         "ADC Task",     // name
         32000,          // stack size
         NULL,           // parameters
-        0,              // priority (higher = more important)
+      1,              // priority (higher = more important)
         NULL,           // task handle (optional)
         0               // core 0
     );
@@ -172,25 +195,73 @@ void loop() {
   if (ready) {
     // Atomically copy results from ADC task / DualSlope
     float localVin = 0.0f;
-    float localProcesstime = 0.0f;
-    uint64_t local_adc_counts = 0;
+    uint64_t localAdcCounts = 0;
+    bool localWasLM35 = false;
 
     taskENTER_CRITICAL(&DualSlope::timerMux);
     localVin = adcval;
-    localProcesstime = conversiontime;
-    local_adc_counts = DualSlope::adc_counts;
+    localAdcCounts = DualSlope::adc_counts;
+    localWasLM35 = DualSlope::lastWasLM35;
     taskEXIT_CRITICAL(&DualSlope::timerMux);
 
-    // Back-calculate Vraw and temperature using calibration constants
-    const float vref = 2.048f;
-    float vinput = localVin;
-    float Vraw = (vinput - (vref * 1.0574f)) / 3.1826f;
-    float tempC = Vraw / 0.01f; // 10 mV/degC
-
     ready = false;
-    Serial.println("\n------------------------------------");
-    Serial.println("Vinput: " + String(vinput, 6) + " V");
-    Serial.println("------------------------------------\n");
+
+    if (localWasLM35) {
+      const float rawAmbientTempC = DualSlope::PrecisionMath::lm35AdcVoltageToCelsius(localVin);
+      ambientTempC = constrain(rawAmbientTempC, 0.0f, 60.0f);
+      const float sensedAmbientVoltageV = (localVin - DualSlope::PrecisionMath::LM35_OFFSET_V) / DualSlope::PrecisionMath::LM35_GAIN;
+
+      Serial.println("\n------------------------------------");
+      Serial.printf("LM35 frame | Amplified Voltage: %.6f V | LM35 Voltage: %.6f V | Ambient: %.2f C | adc_counts: %llu\n",
+                    localVin,
+                    sensedAmbientVoltageV,
+                    ambientTempC,
+                    (unsigned long long)localAdcCounts);
+      Serial.println("------------------------------------\n");
+    } else {
+      count_accumulator += localAdcCounts;
+      sample_count++;
+
+      if (sample_count < N_AVERAGE) {
+        return;
+      }
+
+      const uint64_t averagedCounts = count_accumulator / (uint64_t)N_AVERAGE;
+      count_accumulator = 0;
+      sample_count = 0;
+
+      float localAmbient = 0.0f;
+      taskENTER_CRITICAL(&DualSlope::timerMux);
+      localAmbient = ambientTempC;
+      taskEXIT_CRITICAL(&DualSlope::timerMux);
+
+      const float cjcMv = DualSlope::PrecisionMath::ambientTempToMillivolts(localAmbient);
+      const float averagedVin = 2.048f + (2.048f * ((float)averagedCounts / 50000.0f));
+      const float tcMv = DualSlope::PrecisionMath::tcAdcVoltageToMillivolts(averagedVin);
+      const float totalMv = tcMv + cjcMv;
+      const float compensatedTempC = DualSlope::PrecisionMath::millivoltsToPreciseTemp(totalMv);
+      const float compensatedTempF = (compensatedTempC * 9.0f / 5.0f) + 32.0f;
+      const float expectedBaselineCounts = ((2.5f - 2.048f) / 2.048f) * 50000.0f;
+      const float countsDelta = (float)averagedCounts - expectedBaselineCounts;
+
+      Serial.println("\n------------------------------------");
+      Serial.printf("TC average | Averaged counts: %llu | expected baseline: %.0f | delta: %.0f\n",
+            (unsigned long long)averagedCounts,
+            expectedBaselineCounts,
+            countsDelta);
+      Serial.printf("TC frame  | Averaged Voltage: %.6f V | Net Seebeck: %.4f mV | CJC: %.4f mV | Final: %.2f C / %.2f F\n",
+                    averagedVin,
+                    tcMv,
+                    cjcMv,
+                    compensatedTempC,
+                    compensatedTempF);
+      MAX31855::readMAX();
+      Serial.printf("MAX31855  | TC: %.2f C / %.2f F | Internal: %.2f C\n",
+                    MAX31855::tempC,
+                    MAX31855::tempF,
+                    MAX31855::tempInternal);
+      Serial.println("------------------------------------\n");
+    }
   }
 
   // float maxF = MAX31855::tempF;
@@ -206,7 +277,7 @@ void loop() {
 
 
   //Testing for INA233 readings
-  // INA::readINA();
+  INA::readINA();
 
   // //State machine for updating set temperature and LCD display
   // float potV = Potentiometer::readVoltage();
