@@ -54,13 +54,13 @@ namespace INA {
             // bus_voltage = 0;
             bus_voltage=ina.getBusVoltage_V();
             // DEBUG("Bus Voltage:   "); DEBUG(bus_voltage); DEBUGLN(" V, ");
-            Serial.print("Bus Voltage: "); Serial.print(bus_voltage); Serial.println(" V");
+            // Serial.print("Bus Voltage: "); Serial.print(bus_voltage); Serial.println(" V");
             
             current_value = ina.getCurrent_mA();
-            Serial.print("Current draw: "); Serial.print(current_value); Serial.println(" mA");  
+            // Serial.print("Current draw: "); Serial.print(current_value); Serial.println(" mA");
             
             power_value = ina.getAv_Power_mW();
-            Serial.print("Power draw: "); Serial.print(power_value); Serial.println(" mW");
+            // Serial.print("Power draw: "); Serial.print(power_value); Serial.println(" mW");
 
             lastRead = millis();
         }

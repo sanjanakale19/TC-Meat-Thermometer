@@ -13,11 +13,8 @@
 #include "INA.h"
 #include "lcd_ui.h"
 
-const int VMEASURE_ADCIN = 9; // Define the GPIO pin
-const int VIN_SEL = 42;
-
-float adcval = 0;
-float conversiontime = 0;
+volatile float adcval = 0;
+volatile float conversiontime = 0;
 volatile float ambientTempC = 0.0f;
 
 static const int N_AVERAGE = 8;
@@ -28,15 +25,25 @@ static int sample_count = 0;
 volatile uint32_t ready = false;
 volatile bool armed = false;
 
-uint32_t tempSelect = LOW;    // LOW = TC, HIGH = LM35
-
-
 void adcTask(void *pvParameters) {
     while (true) {
-      // Serial.println("SSS - called adcTask function");
-      if (!armed) {
+      taskENTER_CRITICAL(&DualSlope::timerMux);
+      bool localArmed = armed;
+      bool dataPending = ready;
+      taskEXIT_CRITICAL(&DualSlope::timerMux);
+
+      // NEW: If we are not armed AND data is still pending, Core 1 is behind.
+      // Do NOT spin at Priority 23. Yield the core for 10ms to let the RTOS breathe.
+      if (!localArmed && dataPending) {
+          vTaskDelay(pdMS_TO_TICKS(10));
+          continue; 
+      }
+
+      if (!localArmed && !dataPending) {
+        taskENTER_CRITICAL(&DualSlope::timerMux);
         DualSlope::resetDualSlope();
         armed = true;
+        taskEXIT_CRITICAL(&DualSlope::timerMux);
       } else {
         bool localDone = false;
 
@@ -45,24 +52,26 @@ void adcTask(void *pvParameters) {
         taskEXIT_CRITICAL(&DualSlope::timerMux);
 
         if (localDone) {
-        // copy shared variables under the DualSlope timerMux to avoid races
-        taskENTER_CRITICAL(&DualSlope::timerMux);
-        adcval = DualSlope::Vin;
-        conversiontime = DualSlope::processtime;
-        taskEXIT_CRITICAL(&DualSlope::timerMux);
+          taskENTER_CRITICAL(&DualSlope::timerMux);
+          adcval = DualSlope::Vin;
+          conversiontime = DualSlope::processtime;
+          ready = true;
+          armed = false; 
+          taskEXIT_CRITICAL(&DualSlope::timerMux);
 
-        ready = true;
-
-        // pace sampling: wait 500 ms before allowing next conversion
-        vTaskDelay(pdMS_TO_TICKS(500));
-        armed = false;
+          vTaskDelay(pdMS_TO_TICKS(500));
         }
       }
-      DualSlope::computeADC();
 
-      // delay(100);
+      taskENTER_CRITICAL(&DualSlope::timerMux);
+      bool shouldCompute = armed;
+      taskEXIT_CRITICAL(&DualSlope::timerMux);
 
-      vTaskDelay(0);   // yield without adding 1 ms delay
+      if (shouldCompute) {
+        DualSlope::computeADC();
+      }
+
+      vTaskDelay(0);   
     }
 }
 // AUDIO
@@ -95,17 +104,6 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  gpio_config_t io_conf = {};
-  io_conf.intr_type = GPIO_INTR_DISABLE;
-  io_conf.mode = GPIO_MODE_DISABLE;
-  io_conf.pin_bit_mask = (1ULL << VMEASURE_ADCIN);
-  io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-  gpio_config(&io_conf);
-
-  pinMode(VIN_SEL, OUTPUT);
-  digitalWrite(VIN_SEL, tempSelect);  // LOW for TC, HIGH for LM35
-
   // do SPI initializations before peripherals
   HAL::initVSPI_HAL();
   HAL::initCSPins();
@@ -133,12 +131,10 @@ void setup() {
         "ADC Task",     // name
         32000,          // stack size
         NULL,           // parameters
-      1,              // priority (higher = more important)
+      configMAX_PRIORITIES - 1, // highest application priority for tight polling
         NULL,           // task handle (optional)
         0               // core 0
     );
-
-  delay(1000);
   // lastPotVoltage = Potentiometer::readVoltage();
 }
 //2.956
@@ -147,8 +143,6 @@ void setup() {
 
 // core 1 by default
 void loop() {
-  unsigned long now = millis();
-
   // put your main code here, to run repeatedly:
 
   // // read all sensors
@@ -191,20 +185,20 @@ void loop() {
   float temp_RAW = voltage * 10;
   Serial.println("VMEASURE reading: " + String(voltage, 4) + "V, TEMP: " + String(temp_RAW) + " deg C"); // Print value to the Serial Monitor
   */
-
-  if (ready) {
-    // Atomically copy results from ADC task / DualSlope
+if (ready) {
     float localVin = 0.0f;
     uint64_t localAdcCounts = 0;
     bool localWasLM35 = false;
+    float localAmbient = 0.0f;
 
+    // Capture all volatile parameters under lock immediately
     taskENTER_CRITICAL(&DualSlope::timerMux);
     localVin = adcval;
     localAdcCounts = DualSlope::adc_counts;
     localWasLM35 = DualSlope::lastWasLM35;
+    localAmbient = ambientTempC;
+    ready = false; // Clear flag to unlock Core 0
     taskEXIT_CRITICAL(&DualSlope::timerMux);
-
-    ready = false;
 
     if (localWasLM35) {
       const float rawAmbientTempC = DualSlope::PrecisionMath::lm35AdcVoltageToCelsius(localVin);
@@ -212,54 +206,36 @@ void loop() {
       const float sensedAmbientVoltageV = (localVin - DualSlope::PrecisionMath::LM35_OFFSET_V) / DualSlope::PrecisionMath::LM35_GAIN;
 
       Serial.println("\n------------------------------------");
-      Serial.printf("LM35 frame | Amplified Voltage: %.6f V | LM35 Voltage: %.6f V | Ambient: %.2f C | adc_counts: %llu\n",
+      Serial.printf("DS-ADC     | Amplified Voltage: %.6f V | LM35 Voltage: %.6f V | Ambient: %.2f C | adc_counts: %llu\n",
                     localVin,
                     sensedAmbientVoltageV,
                     ambientTempC,
                     (unsigned long long)localAdcCounts);
       Serial.println("------------------------------------\n");
     } else {
-      count_accumulator += localAdcCounts;
-      sample_count++;
-
-      if (sample_count < N_AVERAGE) {
-        return;
-      }
-
-      const uint64_t averagedCounts = count_accumulator / (uint64_t)N_AVERAGE;
-      count_accumulator = 0;
-      sample_count = 0;
-
-      float localAmbient = 0.0f;
-      taskENTER_CRITICAL(&DualSlope::timerMux);
-      localAmbient = ambientTempC;
-      taskEXIT_CRITICAL(&DualSlope::timerMux);
-
+      const uint64_t counts = localAdcCounts;
       const float cjcMv = DualSlope::PrecisionMath::ambientTempToMillivolts(localAmbient);
-      const float averagedVin = 2.048f + (2.048f * ((float)averagedCounts / 50000.0f));
-      const float tcMv = DualSlope::PrecisionMath::tcAdcVoltageToMillivolts(averagedVin);
+      
+      // Calculate vin directly using the static captured count value
+      const float vin = 2.048f + (2.048f * ((float)counts / 50000.0f));
+      const float tcMv = DualSlope::PrecisionMath::tcAdcVoltageToMillivolts(vin);
       const float totalMv = tcMv + cjcMv;
       const float compensatedTempC = DualSlope::PrecisionMath::millivoltsToPreciseTemp(totalMv);
       const float compensatedTempF = (compensatedTempC * 9.0f / 5.0f) + 32.0f;
       const float expectedBaselineCounts = ((2.5f - 2.048f) / 2.048f) * 50000.0f;
-      const float countsDelta = (float)averagedCounts - expectedBaselineCounts;
+      const float countsDelta = (float)counts - expectedBaselineCounts;
 
       Serial.println("\n------------------------------------");
-      Serial.printf("TC average | Averaged counts: %llu | expected baseline: %.0f | delta: %.0f\n",
-            (unsigned long long)averagedCounts,
-            expectedBaselineCounts,
-            countsDelta);
-      Serial.printf("TC frame  | Averaged Voltage: %.6f V | Net Seebeck: %.4f mV | CJC: %.4f mV | Final: %.2f C / %.2f F\n",
-                    averagedVin,
+      Serial.printf("DS-ADC     | Counts: %llu | expected baseline: %.0f | delta: %.0f\n",
+                    (unsigned long long)counts,
+                    expectedBaselineCounts,
+                    countsDelta);
+      Serial.printf("DS-ADC     | Voltage: %.6f V | Net Seebeck: %.4f mV | CJC: %.4f mV | Final: %.2f C / %.2f F\n",
+                    vin,
                     tcMv,
                     cjcMv,
                     compensatedTempC,
                     compensatedTempF);
-      MAX31855::readMAX();
-      Serial.printf("MAX31855  | TC: %.2f C / %.2f F | Internal: %.2f C\n",
-                    MAX31855::tempC,
-                    MAX31855::tempF,
-                    MAX31855::tempInternal);
       Serial.println("------------------------------------\n");
     }
   }
