@@ -75,27 +75,39 @@ void adcTask(void *pvParameters) {
     }
 }
 // AUDIO
-// const float POT_CHANGE_THRESHOLD_V = 0.05f;
-// const unsigned long SET_MODE_TIMEOUT_MS = 3000;
-// const unsigned long DISPLAY_UPDATE_MS = 500; // LCD only updates every 0.5 seconds
+const float POT_CHANGE_THRESHOLD_V = 0.05f;
+const unsigned long SET_MODE_TIMEOUT_MS = 3000;
+const unsigned long DISPLAY_UPDATE_MS = 500; // LCD only updates every 0.5 seconds
 
-// const float PLACEHOLDER_READ_TEMP_C = 50.0f;
+const float PLACEHOLDER_READ_TEMP_C = 50.0f;
 
-// enum DisplayMode {
-//   READ_TEMP_MODE,
-//   SET_TEMP_MODE
-// };
+enum DisplayMode {
+   READ_TEMP_MODE,
+   SET_TEMP_MODE
+};
 
-// DisplayMode displayMode = READ_TEMP_MODE;
+DisplayMode displayMode = READ_TEMP_MODE;
 
-// float lastPotVoltage = 0.0f;
-// unsigned long lastPotChangeTime = 0;
-// unsigned long lastDisplayUpdateTime = 0;
+float lastPotVoltage = 0.0f;
+unsigned long lastPotChangeTime = 0;
+unsigned long lastDisplayUpdateTime = 0;
+
+float compensatedTempC = 0;
+
+float tempCToReferenceVoltage(float tempC) {
+    float voltage = constrain(((0.00348966f * tempC) + 1.45969f), 0.0f, 3.3f);
+
+    Serial.print("Set Temp = ");
+    Serial.print(tempC, 2);
+    Serial.print(" C, Vref = ");
+    Serial.print(voltage, 4);
+    Serial.println(" V");
+
+    return voltage;
+}
 
 // float tempCToReferenceVoltage(float tempC) {
-//   // TODO: replace with real inverse calibration equation.
-//   // Placeholder: 0 C -> 0.0 V, 200 C -> 3.3 V
-//   return constrain((tempC / 200.0f) * 3.3f, 0.0f, 3.3f);
+//   return constrain(DualSlope::PrecisionMath::preciseTempToVoltageDivided(tempC), 0.0f, 3.3f);
 // }
 
 void setup() {
@@ -109,7 +121,7 @@ void setup() {
   HAL::initCSPins();
 
   // // set up peripherals
-  MAX31855::setupMAX();
+  //MAX31855::setupMAX();
 
   DualSlope::setupDualSlope();
   // do communication initializations before peripherals
@@ -117,14 +129,14 @@ void setup() {
 
   // // set up peripherals
   // MAX31855::setupMAX();
-  // MCP4725::init();
-  // Potentiometer::init();
+  MCP4725::init();
+  Potentiometer::init();
   INA::setupINA();
 
-  // LCD_UI::init();
-  // LCD_UI::writeMessage("Waiting for", "first read");
+  LCD_UI::init();
+  LCD_UI::writeMessage("Waiting for", "first read");
 
-  // Serial.println("before xTask");
+  Serial.println("before xTask");
 
   xTaskCreatePinnedToCore(
         adcTask,        // funct
@@ -135,7 +147,7 @@ void setup() {
         NULL,           // task handle (optional)
         0               // core 0
     );
-  // lastPotVoltage = Potentiometer::readVoltage();
+  lastPotVoltage = Potentiometer::readVoltage();
 }
 //2.956
 //
@@ -220,7 +232,7 @@ if (ready) {
       const float vin = 2.048f + (2.048f * ((float)counts / 50000.0f));
       const float tcMv = DualSlope::PrecisionMath::tcAdcVoltageToMillivolts(vin);
       const float totalMv = tcMv + cjcMv;
-      const float compensatedTempC = DualSlope::PrecisionMath::millivoltsToPreciseTemp(totalMv);
+      compensatedTempC = DualSlope::PrecisionMath::millivoltsToPreciseTemp(totalMv);
       const float compensatedTempF = (compensatedTempC * 9.0f / 5.0f) + 32.0f;
       const float expectedBaselineCounts = ((2.5f - 2.048f) / 2.048f) * 50000.0f;
       const float countsDelta = (float)counts - expectedBaselineCounts;
@@ -256,45 +268,48 @@ if (ready) {
   INA::readINA();
 
   // //State machine for updating set temperature and LCD display
-  // float potV = Potentiometer::readVoltage();
+  float potV = Potentiometer::readVoltage();
+  unsigned long now = millis(); 
 
-  // if (fabs(potV - lastPotVoltage) >= POT_CHANGE_THRESHOLD_V) {
-  //   displayMode = SET_TEMP_MODE;
-  //   lastPotChangeTime = now;
-  //   lastPotVoltage = potV;
-  // }
+  if (fabs(potV - lastPotVoltage) >= POT_CHANGE_THRESHOLD_V) {
+    displayMode = SET_TEMP_MODE;
+    lastPotChangeTime = now;
+    lastPotVoltage = potV;
+  }
   
-  // if (displayMode == SET_TEMP_MODE) {
-  //   float setTempC = Potentiometer::voltageToTemperatureC(potV); // calc desired temperature
+  if (displayMode == SET_TEMP_MODE) {
+    float setTempC = Potentiometer::voltageToTemperatureC(potV); // calc desired temperature
 
-  //   float vref = tempCToReferenceVoltage(setTempC); // convert to reference voltage
+    float vref = tempCToReferenceVoltage(setTempC); // convert to reference voltage
 
-  //   MCP4725::setVoltage(vref); // continuous update of reference voltage
+    MCP4725::setVoltage(vref); // continuous update of reference voltage
 
-  //   if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_MS) { 
-  //     LCD_UI::displaySetTemp(setTempC);
-  //     lastDisplayUpdateTime = now;
-  //   }
+    if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_MS) { 
+      LCD_UI::displaySetTemp(setTempC);
+      lastDisplayUpdateTime = now;
+    }
 
-  //   if (now - lastPotChangeTime >= SET_MODE_TIMEOUT_MS) { // return to default display after no pot movement for 3 sec
-  //     displayMode = READ_TEMP_MODE;
-  //     LCD_UI::displayReadTemp(PLACEHOLDER_READ_TEMP_C);
-  //   }
-  // } 
+    if (now - lastPotChangeTime >= SET_MODE_TIMEOUT_MS) { // return to default display after no pot movement for 3 sec
+      displayMode = READ_TEMP_MODE;
+      LCD_UI::displayReadTemp(compensatedTempC);
+    }
+  } 
   
-  // else { // default display mode
-  //   if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_MS) {
-  //     LCD_UI::displayReadTemp(PLACEHOLDER_READ_TEMP_C);
-  //     lastDisplayUpdateTime = now;
-  //   }
-  // }
+  else { // default display mode
+    if (now - lastDisplayUpdateTime >= DISPLAY_UPDATE_MS) {
+      LCD_UI::displayReadTemp(compensatedTempC);
+      lastDisplayUpdateTime = now;
+    }
+  }
   
   //Test DAC
   //MCP4725::setVoltage(1.65f);
 
   //Testing for potentiometer readings
-  /*float potV = Potentiometer::readVoltage();
+  potV = Potentiometer::readVoltage();
   Serial.print("POT_VREF = ");
   Serial.print(potV, 3);
-  Serial.println(" V");*/
+  Serial.println(" V");
+
+  delay(100);
 }

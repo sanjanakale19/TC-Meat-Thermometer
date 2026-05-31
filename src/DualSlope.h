@@ -54,7 +54,53 @@ namespace DualSlope {
             for (int i = 7; i >= 0; --i) {
                 temperatureC = (temperatureC * V_total_mv) + NIST_K_POSITIVE_INV_COEFFS[i];
             }
+            
             return temperatureC;
+        }
+
+        inline float preciseTempToVoltageDivided(float targetTempC) {
+            const float TEMP_LOW_C = 0.0f;
+            const float TEMP_HIGH_C = 200.0f;
+
+            const float RAW_MV_LOW = 0.0f;
+            const float RAW_MV_HIGH = 8.138f; // Type K approx at 200 C
+
+            const float V_LOW = 2.157f;   // post filter + gain voltage at TEMP_LOW_C
+            const float V_HIGH = 3.646f;  // post filter + gain voltage at TEMP_HIGH_C
+
+            const float R1 = 6200.0f;
+            const float R2 = 10000.0f;
+
+            // Clamp temp
+            if (targetTempC < TEMP_LOW_C) targetTempC = TEMP_LOW_C;
+            if (targetTempC > TEMP_HIGH_C) targetTempC = TEMP_HIGH_C;
+
+            // Binary search RAW thermocouple mV, not post-gain volts
+            float low_mV = RAW_MV_LOW;
+            float high_mV = RAW_MV_HIGH;
+
+            for (int i = 0; i < 30; ++i) {
+                float mid_mV = 0.5f * (low_mV + high_mV);
+
+                float midTempC = millivoltsToPreciseTemp(mid_mV);
+
+                if (midTempC < targetTempC) {
+                    low_mV = mid_mV;
+                } else {
+                    high_mV = mid_mV;
+                }
+            }
+
+            float target_mV = 0.5f * (low_mV + high_mV);
+
+            // Convert thermocouple mV position to post-gain circuit voltage
+            float ratio = (target_mV - RAW_MV_LOW) / (RAW_MV_HIGH - RAW_MV_LOW);
+            float postGainVoltage = V_LOW + ratio * (V_HIGH - V_LOW);
+
+            // Apply voltage divider
+            float dividedVoltage = postGainVoltage * (R2 / (R1 + R2));
+
+            return dividedVoltage;
         }
     }
 
